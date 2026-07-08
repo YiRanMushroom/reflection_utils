@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <meta>
+#include <numeric>
 #include <ranges>
 #include <string>
 #include <type_traits>
@@ -9,7 +10,6 @@
 #include <tuple>
 #include <vector>
 
-#include "yaml_serialization.hpp"
 #include "yaml-cpp/yaml.h"
 
 namespace reflection_utils {
@@ -37,17 +37,6 @@ namespace reflection_utils {
             return all_info;
         }
 
-        // template<typename T>
-        // struct yaml_serialization_impl {
-        //     YAML::Node serialize(const T &value) = delete(
-        //         "Type is not serializable, please specialize yaml_serialization_impl.");
-        // };
-        //
-        // template<typename T>
-        // YAML::Node serialize(const T &value) {
-        //     return yaml_serialization_impl<T>::serialize(value);
-        // }
-
         template<typename T> requires std::is_class_v<T>
         consteval bool is_simple_accessible_class() {
             if constexpr (!std::is_default_constructible_v<T>) {
@@ -61,65 +50,11 @@ namespace reflection_utils {
                 }
             }
         }
+    }
 
-        // template<typename T>
-        //     requires (is_simple_accessible_class<T>())
-        // struct yaml_serialization_impl<T> {
-        //     static YAML::Node serialize(const T &value) {
-        //         constexpr static auto
-        //                 non_static_data_members = std::define_static_array(
-        //                     all_data_members_of(^^T, std::meta::access_context::unprivileged()));
-        //
-        //         YAML::Node map = YAML::Node(YAML::NodeType::Map);
-        //
-        //         template for (constexpr std::meta::info member_info: non_static_data_members) {
-        //             map[identifier_of(member_info)] = _details::serialize(value.[:member_info:]);
-        //         }
-        //
-        //         return map;
-        //     }
-        // };
-        //
-        // template<typename T1, typename T2>
-        // struct yaml_serialization_impl<std::pair<T1, T2>> {
-        //     static YAML::Node serialize(const std::pair<T1, T2> &value) {
-        //         YAML::Node seq = YAML::Node(YAML::NodeType::Sequence);
-        //         seq.push_back(_details::serialize(value.first));
-        //         seq.push_back(_details::serialize(value.second));
-        //         return seq;
-        //     }
-        // };
-        //
-        // template<typename... Ts>
-        // struct yaml_serialization_impl<std::tuple<Ts...>> {
-        //     static YAML::Node serialize(const std::tuple<Ts...> &value) {
-        //         YAML::Node seq = YAML::Node(YAML::NodeType::Sequence);
-        //         template for (const auto &vs: value) {
-        //             seq.push_back(_details::serialize(vs));
-        //         }
-        //         return seq;
-        //     }
-        // };
-        //
-        // template<std::ranges::range R> requires (!std::is_same_v<R, std::string>)
-        // struct yaml_serialization_impl<R> {
-        //     static YAML::Node serialize(const R &value) {
-        //         YAML::Node seq = YAML::Node(YAML::NodeType::Sequence);
-        //         for (const auto &item: value) {
-        //             seq.push_back(_details::serialize(item));
-        //         }
-        //         return seq;
-        //     }
-        // };
-        //
-        // template<typename T>
-        //     requires (std::is_same_v<T, std::string> || std::is_null_pointer_v<T> || std::is_integral_v<T> ||
-        //               std::is_floating_point_v<T>)
-        // struct yaml_serialization_impl<T> {
-        //     static YAML::Node serialize(const T &value) {
-        //         return YAML::Node(value);
-        //     }
-        // };
+    namespace annotations {
+        constexpr static struct silent_fail_t {
+        } silent_fail;
     }
 
     using _details::all_data_members_of;
@@ -152,14 +87,17 @@ namespace YAML {
             T new_value{};
 
             template for (constexpr auto member: data_members) {
+                constexpr bool can_fail = std::meta::annotations_of_with_type(
+                    member, ^^reflection_utils::annotations::silent_fail_t).empty();
                 if (node[std::meta::identifier_of(member)].IsDefined()) {
                     bool success = convert<typename [:std::meta::type_of(member):]>::decode(
                         node[std::meta::identifier_of(member)], new_value.[:member:]);
-                    if (!success) {
-                        return false; // Failed to decode member
+
+                    if (can_fail && !success) {
+                        return false;
                     }
-                } else {
-                    return false; // Missing member in the YAML node
+                } else if constexpr (can_fail) {
+                    return false;
                 }
             }
 
@@ -185,14 +123,41 @@ namespace YAML {
 
             std::tuple<Ts...> new_value;
 
-            template for (const auto idx: std::index_sequence_for<Ts...>()) {
+            template for (constexpr auto idx: std::views::iota(std::size_t{0}, sizeof...(Ts))) {
                 if (!convert<std::tuple_element_t<idx,
                     std::tuple<Ts...>>>::decode(node[idx], std::get<idx>(new_value))) {
-                    return false; // Failed to decode element
+                    return false;
                 }
             }
 
             value = std::move(new_value);
+            return true;
+        }
+    };
+
+    template<typename T>
+    struct convert<std::optional<T>> {
+        static Node encode(const std::optional<T> &value) {
+            if (value.has_value()) {
+                return convert<T>::encode(value.value());
+            }
+            return Node(NodeType::Null);
+        }
+
+        static bool decode(const Node &node, std::optional<T> &value) {
+            if (!node.IsDefined() || node.IsNull()) {
+                value.reset();
+                return true;
+            }
+
+            T temp{};
+
+            if (!convert<T>::decode(node, temp)) {
+                return false;
+            }
+
+            value = std::move(temp);
+
             return true;
         }
     };

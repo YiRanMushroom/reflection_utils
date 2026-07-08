@@ -24,7 +24,7 @@ struct some_class : base_B {
     std::string string_value;
     double double_value;
     int int_value;
-    char char_value;
+    char char_value [[=reflection_utils::annotations::silent_fail]];
     std::vector<std::string> vec;
     std::unordered_map<std::string, int> map;
     std::tuple<int, double, std::pair<std::string, std::vector<size_t>>> tup;
@@ -61,5 +61,36 @@ int main() {
 
     YAML::Node node(cls);
 
-    std::println("{}", Dump(node));
+    // std::println("{}", Dump(node));
+
+    try {
+        constexpr static auto yaml_literal = R"(a: 1
+b: 2
+string_value: Hello
+double_value: 3.14
+int_value: 42
+vec:
+  - one
+  - two
+  - three
+map:
+  key2: 2
+  key1: 1
+tup:
+  - 1
+  - 2.5
+  -
+    - tuple_string
+    -
+      - 10
+      - 20
+      - 30
+)";
+        auto yaml_obj = YAML::Load(yaml_literal);
+        auto cls = yaml_obj.as<some_class>();
+        auto get_yaml = YAML::Node(cls);
+        std::println("{}", Dump(get_yaml));
+    } catch (std::exception& e) {
+        std::println("Exception: {}", e.what());
+    }
 }
