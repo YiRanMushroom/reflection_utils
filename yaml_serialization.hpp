@@ -2,183 +2,115 @@
 
 #include <memory>
 #include <meta>
+#include <ranges>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+#include <tuple>
+#include <vector>
 
 #include "yaml_serialization.hpp"
 #include "yaml-cpp/yaml.h"
 
 namespace reflection_utils {
     namespace _details {
-        class yaml_serialization_context;
-
-        template<typename T>
-        concept can_be_serded =
-                (!std::is_reference_v<T>) &&
-                (!std::is_function_v<T> && !std::is_union_v<T> && !std::is_pointer_v<T>)
-                && (std::is_default_constructible_v<T> && !std::is_const_v<T>);
-
-        template<typename T>
-        concept can_be_referenced_serded =
-                can_be_serded<T> && (
-                    !std::is_class_v<T>
-                    ||
-                    (std::is_class_v<T> && std::is_final_v<T>)
-                );
-
-        template<can_be_serded T>
-        struct serialize_impl {
-            static YAML::Node serialize(yaml_serialization_context &context, const T &value);
-        };
-
-        class yaml_serialization_context {
-        public:
-            template<can_be_serded T>
-            friend struct serialize_impl;
-
-            template<can_be_serded T>
-            YAML::Node serialize(const T &value) {
-                return serialize_impl<T>::serialize(*this, value);
+        consteval std::vector<std::meta::info> all_data_members_of(std::meta::info class_type,
+                                                                   std::meta::access_context access_context =
+                                                                           std::meta::access_context::current()) {
+            auto bases = std::meta::bases_of(class_type, access_context)
+                         | std::ranges::views::transform(std::meta::type_of);
+            std::vector<std::meta::info> all_info;
+            for (std::meta::info base: bases) {
+                for (std::meta::info base_members: all_data_members_of(base, access_context)) {
+                    all_info.push_back(base_members);
+                }
             }
 
-            YAML::Node output_shared_objects() const {
+            for (std::meta::info my_members: std::meta::nonstatic_data_members_of(class_type, access_context)) {
+                all_info.push_back(my_members);
+            }
+
+            return all_info;
+        }
+
+        template<typename T>
+        struct yaml_serialization_impl {
+            YAML::Node serialize(const T &value) = delete(
+                "Type is not serializable, please specialize yaml_serialization_impl.");
+        };
+
+        template<typename T>
+        YAML::Node serialize(const T &value) {
+            return yaml_serialization_impl<T>::serialize(value);
+        }
+
+        template<typename T> requires std::is_class_v<T>
+        consteval bool is_simple_accessible_class() {
+            if constexpr (!std::is_default_constructible_v<T>) {
+                return false;
+            } else {
+                return all_data_members_of(^^T, std::meta::access_context::unprivileged()).size()
+                       == all_data_members_of(^^T, std::meta::access_context::unchecked()).size();
+            }
+        }
+
+        template<typename T>
+            requires (is_simple_accessible_class<T>())
+        struct yaml_serialization_impl<T> {
+            static YAML::Node serialize(const T &value) {
+                constexpr static auto
+                        non_static_data_members = std::define_static_array(
+                            all_data_members_of(^^T, std::meta::access_context::unprivileged()));
+
                 YAML::Node map = YAML::Node(YAML::NodeType::Map);
 
-                for (const auto &[ptr, node]: m_shared_objects) {
-                    map[reinterpret_cast<std::uintptr_t>(ptr)] = node;
+                template for (constexpr std::meta::info member_info: non_static_data_members) {
+                    map[identifier_of(member_info)] = _details::serialize(value.[:member_info:]);
                 }
 
                 return map;
             }
-
-            template<can_be_referenced_serded T>
-            YAML::Node get_or_register_node(const T &value) {
-                void *address = static_cast<void *>(const_cast<T *>(&value));
-                auto it = m_shared_objects.find(address);
-
-                if (it != m_shared_objects.end()) {
-                    return it->second;
-                }
-
-                YAML::Node node = m_shared_objects[address] = YAML::Node();
-
-                YAML::Node temp = this->serialize(value);
-
-                if (temp.IsMap()) {
-                    for (const auto &pair: temp) {
-                        node[pair.first] = pair.second;
-                    }
-                } else if (temp.IsSequence()) {
-                    for (const auto &item: temp) {
-                        node.push_back(item);
-                    }
-                } else {
-                    node = temp;
-                }
-
-                return node;
-            }
-
-        private:
-            std::unordered_map<void *, YAML::Node> m_shared_objects;
         };
 
-        template<can_be_serded T>
-        YAML::Node serialize_impl<T>::serialize(yaml_serialization_context &context,
-                                                const T &value) {
-            if constexpr (std::is_integral_v<T> || std::is_floating_point_v<T> || std::is_same_v<T, std::string>) {
-                return YAML::Node(value);
-            } else if constexpr (std::is_class_v<T>) {
-                YAML::Node node(YAML::NodeType::Map);
-
-                constexpr static auto non_static_data_members = std::define_static_array(
-                    std::meta::nonstatic_data_members_of(^^T, std::meta::access_context::unchecked()));
-
-                template for (constexpr auto member: non_static_data_members) {
-                    constexpr std::string_view name = std::meta::identifier_of(member);
-                    node[name] = context.serialize(value.[:member:]);
-                }
-
-                return node;
-            } else {
-                static_assert(can_be_serded<T>, "Type cannot be serialized");
-            }
-        }
-
-        template<can_be_serded T>
-        struct serialize_impl<std::shared_ptr<T>> {
-            static YAML::Node serialize(yaml_serialization_context &context, const std::shared_ptr<T> &value) {
-                if (!value) {
-                    return YAML::Node(YAML::NodeType::Null);
-                }
-                return context.get_or_register_node(*value);
+        template<typename T1, typename T2>
+        struct yaml_serialization_impl<std::pair<T1, T2>> {
+            static YAML::Node serialize(const std::pair<T1, T2> &value) {
+                YAML::Node seq = YAML::Node(YAML::NodeType::Sequence);
+                seq.push_back(_details::serialize(value.first));
+                seq.push_back(_details::serialize(value.second));
+                return seq;
             }
         };
 
-        template<can_be_serded T>
-        struct serialize_impl<std::weak_ptr<T>> {
-            static YAML::Node serialize(yaml_serialization_context &context, const std::weak_ptr<T> &value) {
-                if (auto shared = value.lock()) {
-                    return context.get_or_register_node(*shared);
+        template<typename... Ts>
+        struct yaml_serialization_impl<std::tuple<Ts...>> {
+            static YAML::Node serialize(const std::tuple<Ts...> &value) {
+                YAML::Node seq = YAML::Node(YAML::NodeType::Sequence);
+                template for (const auto &vs: value) {
+                    seq.push_back(_details::serialize(vs));
                 }
-                return YAML::Node(YAML::NodeType::Null);
+                return seq;
             }
         };
 
-        template<can_be_serded T>
-        struct serialize_impl<std::unique_ptr<T>> {
-            static YAML::Node serialize(yaml_serialization_context &context, const std::unique_ptr<T> &value) {
-                if (!value) {
-                    return YAML::Node(YAML::NodeType::Null);
-                }
-                return context.get_or_register_node(*value);
-            }
-        };
-
-        template<can_be_serded T>
-        struct serialize_impl<std::optional<T>> {
-            static YAML::Node serialize(yaml_serialization_context &context, const std::optional<T> &value) {
-                if (!value.has_value()) {
-                    return YAML::Node(YAML::NodeType::Null);
-                }
-                return context.serialize(value.value());
-            }
-        };
-
-        template<can_be_serded T1, can_be_serded T2>
-        struct serialize_impl<std::pair<T1, T2>> {
-            static YAML::Node serialize(yaml_serialization_context &context, const std::pair<T1, T2> &value) {
-                YAML::Node node(YAML::NodeType::Sequence);
-                node.push_back(context.serialize(value.first));
-                node.push_back(context.serialize(value.second));
-                return node;
-            }
-        };
-
-        template<can_be_serded... T>
-        struct serialize_impl<std::tuple<T...>> {
-            static YAML::Node serialize(yaml_serialization_context &context, const std::tuple<T...> &value) {
-                YAML::Node node(YAML::NodeType::Sequence);
-                template for (auto member : value) {
-                    node.push_back(context.serialize(member));
-                }
-
-                return node;
-            }
-        };
-
-        template<can_be_serded T>
-        struct serialize_impl<std::vector<T>> {
-            static YAML::Node serialize(yaml_serialization_context &context, const std::vector<T> &value) {
-                YAML::Node node(YAML::NodeType::Sequence);
+        template<std::ranges::range R> requires (!std::is_same_v<R, std::string>)
+        struct yaml_serialization_impl<R> {
+            static YAML::Node serialize(const R &value) {
+                YAML::Node seq = YAML::Node(YAML::NodeType::Sequence);
                 for (const auto &item: value) {
-                    node.push_back(context.serialize(item));
+                    seq.push_back(_details::serialize(item));
                 }
-                return node;
+                return seq;
+            }
+        };
+
+        template<typename T>
+            requires (std::is_same_v<T, std::string> || std::is_null_pointer_v<T> || std::is_integral_v<T> ||
+                      std::is_floating_point_v<T>)
+        struct yaml_serialization_impl<T> {
+            static YAML::Node serialize(const T &value) {
+                return YAML::Node(value);
             }
         };
     }
-
-    using _details::yaml_serialization_context;
 }
