@@ -3,7 +3,8 @@ project(reflection_utils)
 
 set(CMAKE_CXX_STANDARD 26)
 
-add_executable(reflection_utils main.cpp)
+add_executable(reflection_utils main.cpp
+        yaml_serialization.hpp)
 
 target_compile_options(
         reflection_utils
@@ -24,4 +25,11 @@ target_link_options(
         "-static"
         "-static-libgcc"
         "-static-libstdc++"
+)
+
+add_subdirectory(yaml-cpp)
+target_link_libraries(
+        reflection_utils
+        PUBLIC
+        yaml-cpp
 )

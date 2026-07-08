@@ -4,19 +4,25 @@
 #include <string_view>
 #include <print>
 
-struct some_class {
+#include "yaml_serialization.hpp"
+
+struct some_class final {
     std::string string_value;
     double double_value;
     int int_value;
     char char_value;
+
+    std::shared_ptr<some_class> shared_ptr_value;
+    std::weak_ptr<some_class> weak_ptr_value;
 };
 
 int main() {
-    constexpr std::meta::info ref = ^^void;
+    auto head = std::make_shared<some_class>();
+    auto tail = std::make_shared<some_class>();
+    head->shared_ptr_value = tail;
+    tail->weak_ptr_value = head;
 
-    template for (constexpr auto e : std::define_static_array(std::meta::members_of(^^std::meta, std::meta::access_context::unchecked()))) {
-        if constexpr (std::meta::has_identifier(e)) {
-            std::println("{}: {}", std::meta::identifier_of(e), std::meta::display_string_of(e));
-        }
-    }
+    reflection_utils::yaml_serialization_context context;
+    auto serialized = context.serialize(*head);
+    std::println("{}", Dump(serialized));
 }
