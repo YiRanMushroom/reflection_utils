@@ -29,9 +29,7 @@ struct some_class : base_B {
         return std::vector<std::string>{"Hello", "World", "My Friend"};
     })]];
     std::unordered_map<std::string, int> map [[=reflection_utils::annotations::default_construct_by([] {
-        {
-            return std::unordered_map<std::string, int>{{"key1", 1}, {"key2", 2}};
-        }
+        return std::unordered_map<std::string, int>{{"key1", 1}, {"key2", 2}};
     })]];
     std::tuple<int, double, std::pair<std::string, std::vector<size_t>>> tup;
 };
