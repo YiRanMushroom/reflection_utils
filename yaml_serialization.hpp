@@ -178,8 +178,6 @@ namespace YAML {
             constexpr static auto data_members = std::define_static_array(
                 reflection_utils::all_data_members_of(^^T, std::meta::access_context::unprivileged()));
 
-            T new_value{};
-
             template for (constexpr auto member: data_members) {
                 constexpr std::meta::info handler =
                         (std::meta::annotations_of(member)
@@ -194,21 +192,20 @@ namespace YAML {
                         .value_or(std::meta::reflect_constant(reflection_utils::annotations::throw_handler));
 
                 try {
-                    new_value.[:member:] = node[std::meta::identifier_of(member)]
+                    value.[:member:] = node[std::meta::identifier_of(member)]
                             .template as<typename [:std::meta::type_of(member):]>();
                 } catch (YAML::KeyNotFound &e) {
-                    [:handler:].transform(new_value.[:member:],
+                    [:handler:].transform(value.[:member:],
                                           reflection_utils::annotations::deserialization_failure_reason::missing_key);
                 } catch (YAML::BadConversion &e) {
-                    [:handler:].transform(new_value.[:member:],
+                    [:handler:].transform(value.[:member:],
                                           reflection_utils::annotations::deserialization_failure_reason::incorrect_format);
                 } catch (...) {
-                    [:handler:].transform(new_value.[:member:],
+                    [:handler:].transform(value.[:member:],
                                           reflection_utils::annotations::deserialization_failure_reason::unknown);
                 }
             }
 
-            value = std::move(new_value);
             return true;
         }
     };
@@ -228,16 +225,14 @@ namespace YAML {
                 return false;
             }
 
-            std::tuple<Ts...> new_value;
 
             template for (constexpr auto idx: std::views::iota(std::size_t{0}, sizeof...(Ts))) {
                 if (!convert<std::tuple_element_t<idx,
-                    std::tuple<Ts...>>>::decode(node[idx], std::get<idx>(new_value))) {
+                    std::tuple<Ts...>>>::decode(node[idx], std::get<idx>(value))) {
                     return false;
                 }
             }
 
-            value = std::move(new_value);
             return true;
         }
     };
