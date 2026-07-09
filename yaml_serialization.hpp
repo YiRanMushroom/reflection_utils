@@ -53,12 +53,51 @@ namespace reflection_utils {
     }
 
     namespace annotations {
-        constexpr static struct silent_fail_t {
-        } silent_fail;
+        // constexpr static struct silent_fail_t {} silent_fail;
+
+        template<typename T>
+        struct default_value_t {
+        public:
+            T value{};
+
+            consteval default_value_t(const T &t) requires std::copy_constructible<T> : value(t) {}
+
+            consteval default_value_t(const T &t) requires (std::is_array_v<T> && std::is_trivially_copyable_v<T>) {
+                std::ranges::copy(std::begin(t), std::end(t), value);
+            }
+        };
+
+        template<typename T>
+        consteval default_value_t<T> default_value(const T &t) {
+            return default_value_t<T>(t);
+        }
     }
 
     using _details::all_data_members_of;
     using _details::is_simple_accessible_class;
+
+    namespace views {
+        struct to_optional_fn : std::ranges::range_adaptor_closure<to_optional_fn> {
+            template<std::ranges::input_range R>
+            consteval auto operator()(R &&r) const {
+                auto vec = r | std::ranges::to<std::vector>();
+
+                using value_type = std::ranges::range_value_t<R>;
+
+                if (vec.empty()) {
+                    return std::optional<value_type>{std::nullopt};
+                }
+
+                if (vec.size() > 1) {
+                    throw std::runtime_error("Expected at most one element in the range, but got more than one.");
+                }
+
+                return std::optional<value_type>{vec[0]};
+            }
+        };
+
+        inline constexpr to_optional_fn to_optional{};
+    }
 }
 
 namespace YAML {
@@ -87,17 +126,25 @@ namespace YAML {
             T new_value{};
 
             template for (constexpr auto member: data_members) {
-                constexpr bool can_fail = std::meta::annotations_of_with_type(
-                    member, ^^reflection_utils::annotations::silent_fail_t).empty();
-                if (node[std::meta::identifier_of(member)].IsDefined()) {
-                    bool success = convert<typename [:std::meta::type_of(member):]>::decode(
-                        node[std::meta::identifier_of(member)], new_value.[:member:]);
+                constexpr std::optional<std::meta::info> default_value_optional =
+                        std::meta::annotations_of(member)
+                        | std::ranges::views::filter([](std::meta::info annotation_info)consteval {
+                            return std::meta::template_of(std::meta::type_of(annotation_info)) == ^^
+                                   reflection_utils::annotations::default_value_t
+                                   && is_convertible_type(
+                                       std::meta::template_arguments_of(std::meta::type_of(annotation_info))[0],
+                                       std::meta::type_of(member));
+                        })
+                        | reflection_utils::views::to_optional;
 
-                    if (can_fail && !success) {
+                if (!(node[std::meta::identifier_of(member)].IsDefined() &&
+                      convert<typename [:std::meta::type_of(member):]>::decode(
+                          node[std::meta::identifier_of(member)], new_value.[:member:]))) {
+                    if constexpr (default_value_optional.has_value()) {
+                        new_value.[:member:] = [:std::meta::constant_of(*default_value_optional):].value;
+                    } else {
                         return false;
                     }
-                } else if constexpr (can_fail) {
-                    return false;
                 }
             }
 

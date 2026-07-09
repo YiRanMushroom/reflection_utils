@@ -21,10 +21,10 @@ struct base_B : base_A {
 
 
 struct some_class : base_B {
-    std::string string_value;
+    std::string string_value [[=reflection_utils::annotations::default_value("Hello")]];
     double double_value;
     int int_value;
-    char char_value [[=reflection_utils::annotations::silent_fail]];
+    char char_value [[=reflection_utils::annotations::default_value('A')]];
     std::vector<std::string> vec;
     std::unordered_map<std::string, int> map;
     std::tuple<int, double, std::pair<std::string, std::vector<size_t>>> tup;
@@ -66,7 +66,6 @@ int main() {
     try {
         constexpr static auto yaml_literal = R"(a: 1
 b: 2
-string_value: Hello
 double_value: 3.14
 int_value: 42
 vec:
@@ -90,7 +89,7 @@ tup:
         auto cls = yaml_obj.as<some_class>();
         auto get_yaml = YAML::Node(cls);
         std::println("{}", Dump(get_yaml));
-    } catch (std::exception& e) {
+    } catch (std::exception &e) {
         std::println("Exception: {}", e.what());
     }
 }
