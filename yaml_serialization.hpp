@@ -225,12 +225,8 @@ namespace YAML {
                 return false;
             }
 
-
             template for (constexpr auto idx: std::views::iota(std::size_t{0}, sizeof...(Ts))) {
-                if (!convert<std::tuple_element_t<idx,
-                    std::tuple<Ts...>>>::decode(node[idx], std::get<idx>(value))) {
-                    return false;
-                }
+                std::get<idx>(value) = node[idx].template as<std::tuple_element_t<idx, std::tuple<Ts...>>>();
             }
 
             return true;
@@ -252,13 +248,7 @@ namespace YAML {
                 return true;
             }
 
-            T temp{};
-
-            if (!convert<T>::decode(node, temp)) {
-                return false;
-            }
-
-            value = std::move(temp);
+            value = node.as<T>();
 
             return true;
         }
