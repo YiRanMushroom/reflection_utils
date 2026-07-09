@@ -37,7 +37,32 @@ enum class test_enum : uint32_t {
     four
 };
 
+class string_literal {
+public:
+    consteval string_literal(std::string_view sv) : str(std::define_static_string(sv)), sz(sv.size()) {}
+
+    template<size_t N>
+    consteval string_literal(const char (&str)[N]) : string_literal(std::string_view(str, N - 1)) {}
+
+    [[nodiscard]] constexpr std::string_view view() const {
+        return {str, sz};
+    }
+
+public:
+    const char *str;
+    size_t sz;
+};
+
+constexpr static string_literal sl = "123";
+constexpr static auto view = std::string_view(sl.view());
+
+template<string_literal some_literal>
+void print_literal() {
+    std::println("Literal: {}", some_literal.view());
+}
+
 int main() {
+    print_literal<"literal">();
     some_class cls = {
         {base_A{.a = 1}, 2},
 
