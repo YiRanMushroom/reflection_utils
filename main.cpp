@@ -25,8 +25,14 @@ struct some_class : base_B {
     double double_value [[=reflection_utils::annotations::default_value(3.14)]];
     int int_value;
     char char_value[[=reflection_utils::annotations::default_value('A')]];
-    std::vector<std::string> vec [[=reflection_utils::annotations::default_value()]];
-    std::unordered_map<std::string, int> map;
+    std::vector<std::string> vec [[=reflection_utils::annotations::default_construct_by([] {
+        return std::vector<std::string>{"Hello", "World", "My Friend"};
+    })]];
+    std::unordered_map<std::string, int> map [[=reflection_utils::annotations::default_construct_by([] {
+        {
+            return std::unordered_map<std::string, int>{{"key1", 1}, {"key2", 2}};
+        }
+    })]];
     std::tuple<int, double, std::pair<std::string, std::vector<size_t>>> tup;
 };
 
