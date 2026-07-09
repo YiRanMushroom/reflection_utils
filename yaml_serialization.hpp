@@ -55,57 +55,77 @@ namespace reflection_utils {
     namespace annotations {
         struct default_construct_type {};
 
-        template<typename T>
-        struct default_value_t : default_construct_type {
-        public:
-            T value{};
-
-            consteval default_value_t(const T &t) requires std::copy_constructible<T> : value(t) {}
-
-            consteval default_value_t(const T &t) requires (std::is_array_v<T> && std::is_trivially_copyable_v<T>) {
-                std::ranges::copy(std::begin(t), std::end(t), value);
-            }
-
-            template<typename U> requires std::is_convertible_v<T, U>
-            constexpr U construct() const {
-                return U{value};
-            }
+        enum deserialization_failure_reason : uint8_t {
+            unknown = 0,
+            missing_key,
+            incorrect_format
         };
 
-        template<>
-        struct default_value_t<void> {
-        public:
-            template<typename U> requires std::is_default_constructible_v<U>
-            constexpr static U construct() {
-                return U{};
+        // template<typename T>
+        // struct default_value_t : default_construct_type {
+        // public:
+        //     T value{};
+        //
+        //     consteval default_value_t(const T &t) requires std::copy_constructible<T> : value(t) {}
+        //
+        //     consteval default_value_t(const T &t) requires (std::is_array_v<T> && std::is_trivially_copyable_v<T>) {
+        //         std::ranges::copy(std::begin(t), std::end(t), value);
+        //     }
+        //
+        //     template<typename U> requires std::is_convertible_v<T, U>
+        //     constexpr U construct() const {
+        //         return U{value};
+        //     }
+        // };
+        //
+        // template<>
+        // struct default_value_t<void> {
+        // public:
+        //     template<typename U> requires std::is_default_constructible_v<U>
+        //     constexpr static U construct() {
+        //         return U{};
+        //     }
+        // };
+        //
+        // template<typename T>
+        // consteval default_value_t<T> default_value(const T &t) {
+        //     return default_value_t<T>(t);
+        // }
+        //
+        // consteval default_value_t<void> default_value() {
+        //     return default_value_t<void>{};
+        // }
+        //
+        // template<typename Fn>
+        // struct default_construct_by_t : default_construct_type {
+        //     Fn fn{};
+        //
+        //     consteval default_construct_by_t(Fn f) : fn(std::move(f)) {}
+        //
+        //     template<typename U> requires std::convertible_to<std::invoke_result_t<Fn>, U>
+        //     constexpr U construct() const {
+        //         return fn();
+        //     }
+        // };
+        //
+        // template<typename Fn>
+        // consteval default_construct_by_t<Fn> default_construct_by(Fn fn) {
+        //     return default_construct_by_t<Fn>(std::move(fn));
+        // }
+
+        constexpr struct default_construct_t : default_construct_type {
+            template<typename T>
+            constexpr static void transform(T &value_in, deserialization_failure_reason failure_reason) {
+                // do nothing since it is default constructed
             }
-        };
+        } default_construct;
 
-        template<typename T>
-        consteval default_value_t<T> default_value(const T &t) {
-            return default_value_t<T>(t);
-        }
-
-        consteval default_value_t<void> default_value() {
-            return default_value_t<void>{};
-        }
-
-        template<typename Fn>
-        struct default_construct_by_t : default_construct_type {
-            Fn fn{};
-
-            consteval default_construct_by_t(Fn f) : fn(std::move(f)) {}
-
-            template<typename U> requires std::convertible_to<std::invoke_result_t<Fn>, U>
-            constexpr U construct() const {
-                return fn();
+        constexpr struct throw_handler_t : default_construct_type {
+            template<typename T>
+            constexpr static void transform(T &value_in, deserialization_failure_reason failure_reason) {
+                throw;
             }
-        };
-
-        template<typename Fn>
-        consteval default_construct_by_t<Fn> default_construct_by(Fn fn) {
-            return default_construct_by_t<Fn>(std::move(fn));
-        }
+        } throw_handler;
     }
 
     using _details::all_data_members_of;
@@ -161,24 +181,30 @@ namespace YAML {
             T new_value{};
 
             template for (constexpr auto member: data_members) {
-                constexpr std::optional<std::meta::info> default_value_optional =
-                        std::meta::annotations_of(member)
-                        | std::ranges::views::filter([](std::meta::info annotation_info)consteval {
-                            return std::meta::is_base_of_type(^^reflection_utils::annotations::default_construct_type,
-                                                              std::meta::type_of(annotation_info));
-                        })
-                        | reflection_utils::views::to_optional;
+                constexpr std::meta::info handler =
+                        (std::meta::annotations_of(member)
+                         | std::ranges::views::filter([](std::meta::info annotation_info)consteval {
+                             return std::meta::is_base_of_type(^^reflection_utils::annotations::default_construct_type,
+                                                               std::meta::type_of(annotation_info));
+                         })
+                         | std::views::transform([](std::meta::info annotation_info)consteval {
+                             return std::meta::constant_of(annotation_info);
+                         })
+                         | reflection_utils::views::to_optional)
+                        .value_or(std::meta::reflect_constant(reflection_utils::annotations::throw_handler));
 
-
-                if (!(node[std::meta::identifier_of(member)].IsDefined() &&
-                      convert<typename [:std::meta::type_of(member):]>::decode(
-                          node[std::meta::identifier_of(member)], new_value.[:member:]))) {
-                    if constexpr (default_value_optional.has_value()) {
-                        new_value.[:member:] = [:std::meta::constant_of(*default_value_optional):].template construct<
-                            typename [:std::meta::type_of(member):]>();
-                    } else {
-                        return false;
-                    }
+                try {
+                    new_value.[:member:] = node[std::meta::identifier_of(member)]
+                            .template as<typename [:std::meta::type_of(member):]>();
+                } catch (YAML::KeyNotFound &e) {
+                    [:handler:].transform(new_value.[:member:],
+                                          reflection_utils::annotations::deserialization_failure_reason::missing_key);
+                } catch (YAML::BadConversion &e) {
+                    [:handler:].transform(new_value.[:member:],
+                                          reflection_utils::annotations::deserialization_failure_reason::incorrect_format);
+                } catch (...) {
+                    [:handler:].transform(new_value.[:member:],
+                                          reflection_utils::annotations::deserialization_failure_reason::unknown);
                 }
             }
 

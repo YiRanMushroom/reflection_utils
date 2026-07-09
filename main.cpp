@@ -21,16 +21,12 @@ struct base_B : base_A {
 
 
 struct some_class : base_B {
-    std::string string_value [[=reflection_utils::annotations::default_value("Hello")]];
-    double double_value [[=reflection_utils::annotations::default_value(3.14)]];
+    std::string string_value [[=reflection_utils::annotations::default_construct]] = "string";
+    double double_value [[=reflection_utils::annotations::default_construct]];
     int int_value;
-    char char_value[[=reflection_utils::annotations::default_value('A')]];
-    std::vector<std::string> vec [[=reflection_utils::annotations::default_construct_by([] {
-        return std::vector<std::string>{"Hello", "World", "My Friend"};
-    })]];
-    std::unordered_map<std::string, int> map [[=reflection_utils::annotations::default_construct_by([] {
-        return std::unordered_map<std::string, int>{{"key1", 1}, {"key2", 2}};
-    })]];
+    char char_value[[=reflection_utils::annotations::default_construct]];
+    std::vector<std::string> vec [[=reflection_utils::annotations::default_construct]];
+    std::unordered_map<std::string, int> map [[=reflection_utils::annotations::default_construct]];
     std::tuple<int, double, std::pair<std::string, std::vector<size_t>>> tup;
 };
 
