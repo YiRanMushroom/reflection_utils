@@ -22,10 +22,10 @@ struct base_B : base_A {
 
 struct some_class : base_B {
     std::string string_value [[=reflection_utils::annotations::default_value("Hello")]];
-    double double_value;
+    double double_value [[=reflection_utils::annotations::default_value(3.14)]];
     int int_value;
-    char char_value [[=reflection_utils::annotations::default_value('A')]];
-    std::vector<std::string> vec;
+    char char_value[[=reflection_utils::annotations::default_value('A')]];
+    std::vector<std::string> vec [[=reflection_utils::annotations::default_value()]];
     std::unordered_map<std::string, int> map;
     std::tuple<int, double, std::pair<std::string, std::vector<size_t>>> tup;
 };

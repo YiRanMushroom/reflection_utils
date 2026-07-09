@@ -65,11 +65,29 @@ namespace reflection_utils {
             consteval default_value_t(const T &t) requires (std::is_array_v<T> && std::is_trivially_copyable_v<T>) {
                 std::ranges::copy(std::begin(t), std::end(t), value);
             }
+
+            template<typename U> requires std::is_convertible_v<T, U>
+            U construct() const {
+                return U{value};
+            }
+        };
+
+        template<>
+        struct default_value_t<void> {
+        public:
+            template<typename U> requires std::is_default_constructible_v<U>
+            static U construct() {
+                return U{};
+            }
         };
 
         template<typename T>
         consteval default_value_t<T> default_value(const T &t) {
             return default_value_t<T>(t);
+        }
+
+        consteval default_value_t<void> default_value() {
+            return default_value_t<void>{};
         }
     }
 
@@ -130,18 +148,16 @@ namespace YAML {
                         std::meta::annotations_of(member)
                         | std::ranges::views::filter([](std::meta::info annotation_info)consteval {
                             return std::meta::template_of(std::meta::type_of(annotation_info)) == ^^
-                                   reflection_utils::annotations::default_value_t
-                                   && is_convertible_type(
-                                       std::meta::template_arguments_of(std::meta::type_of(annotation_info))[0],
-                                       std::meta::type_of(member));
+                                   reflection_utils::annotations::default_value_t;
                         })
                         | reflection_utils::views::to_optional;
+
 
                 if (!(node[std::meta::identifier_of(member)].IsDefined() &&
                       convert<typename [:std::meta::type_of(member):]>::decode(
                           node[std::meta::identifier_of(member)], new_value.[:member:]))) {
                     if constexpr (default_value_optional.has_value()) {
-                        new_value.[:member:] = [:std::meta::constant_of(*default_value_optional):].value;
+                        new_value.[:member:] = [:std::meta::constant_of(*default_value_optional):].template construct<typename [:std::meta::type_of(member):]>();
                     } else {
                         return false;
                     }
